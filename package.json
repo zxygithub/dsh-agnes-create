@@ -1,0 +1,56 @@
+{
+  "name": "dsh-agnes-create",
+  "version": "0.3.0",
+  "description": "Agnes 创作：在 DeepSeek Harness 里用 agnes-image-2.5-flash 出图、agnes-video-2.5-flash 出视频。侧边栏面板 + 提示词输入框，Key 与输出目录可在界面里配置。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zxygithub/dsh-agnes-create.git"
+  },
+  "homepage": "https://github.com/zxygithub/dsh-agnes-create#readme",
+  "bugs": {
+    "url": "https://github.com/zxygithub/dsh-agnes-create/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "agnes",
+    "image-generation",
+    "video-generation"
+  ],
+  "engines": {
+    "dsh": ">=0.2.2-rc.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer"
+      ]
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.2-rc.1+": "compatible"
+      }
+    }
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "@deepseek-ai/dsh-client-ui-renderer": ">=0.2.2-rc.1"
+  },
+  "license": "MIT"
+}

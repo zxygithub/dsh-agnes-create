@@ -1,0 +1,5 @@
+# dsh-agnes-create bundle for DeepSeek Harness.
+# 安装后本 patch 自动把插件行插入 profile 组合；插件通过 profile 的 node_modules 按包名解析。
+- insert:
+    - id: dsh-agnes-create
+      name: 'dsh-agnes-create'
