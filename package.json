@@ -1,7 +1,7 @@
 {
   "name": "dsh-agnes-create",
-  "version": "0.4.1",
-  "description": "Agnes 创作：在 DeepSeek Harness 里用 agnes-image-2.5-flash 出图（含图生图 / 多图合成）、agnes-video-2.5-flash 出视频。侧边栏面板 + 提示词 + 参考图，结果内联展示，Key 与输出目录可在面板配置。",
+  "version": "0.7.0",
+  "description": "Agnes 创作：在 DeepSeek Harness 里用 agnes-image-2.5-flash 出图（含图生图 / 多图合成）、agnes-video-2.5-flash 出视频（含首帧 / 尾帧图生视频与 seed）。侧边栏面板 + 提示词 + 参考图，结果内联展示并可复制路径 / 访达显示 / 下载；提示词会写进图片元数据，鼠标悬停即可查看与复制；可浏览输出目录里已有的图片与视频，历史落盘 24 条。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -34,7 +34,11 @@
     "video-generation",
     "image-to-image",
     "img2img",
-    "multi-image"
+    "multi-image",
+    "text-to-video",
+    "image-to-video",
+    "keyframe",
+    "seed"
   ],
   "engines": {
     "dsh": ">=0.2.2-rc.1"
