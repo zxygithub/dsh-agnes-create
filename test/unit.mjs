@@ -182,7 +182,7 @@ test('normalizeRefs：放行 http(s) 与 data:image', () => {
 });
 
 test('normalizeRefs：拒绝 file:// 与 data:text，且提示第几张', () => {
-  assert.throws(() => A.normalizeRefs(['https://ok/a.png', 'file:///tmp/a.png']), /第 2 张/);
+  assert.throws(() => A.normalizeRefs(['https://ok/a.png', 'file:///data/a.png']), /第 2 张/);
   assert.throws(() => A.normalizeRefs(['data:text/plain;base64,AAA']), /第 1 张/);
 });
 
@@ -193,7 +193,7 @@ test('normalizeRefs：超过 8 张报错并带数量', () => {
 
 test('safeName：去掉路径只留文件名，非法字符整条拒绝', () => {
   assert.equal(A.safeName('../../etc/passwd'), 'passwd');
-  assert.equal(A.safeName('/tmp/agnes-ab.png'), 'agnes-ab.png');
+  assert.equal(A.safeName('/data/proj/agnes-ab.png'), 'agnes-ab.png');
   // 空壳 / 疑似穿越的输入返回 null，由调用方拒绝
   assert.equal(A.safeName('a b/c?.png'), null);
   assert.equal(A.safeName(''), null);
@@ -495,10 +495,10 @@ globalThis.fetch = async (url, opts = {}) => {
     const files = libVersion === 0
       ? libFiles
       : libFiles.concat([{ filename: 'n.png', name: 'n.png', kind: 'image', bytes: 1, mtime: Date.now(), prompt: '新生成的' }]);
-    return json({ ok: true, outDir: '/tmp/out', files, images: 2, videos: 1 });
+    return json({ ok: true, outDir: '/data/out', files, images: 2, videos: 1 });
   }
   if (u.startsWith('/agnes/generate')) {
-    return json({ ok: true, filename: 'n.png', path: '/tmp/out/n.png', bytes: 1, mode: 'text2img', size: '1K', ratio: '1:1', refCount: 0 });
+    return json({ ok: true, filename: 'n.png', path: '/data/out/n.png', bytes: 1, mode: 'text2img', size: '1K', ratio: '1:1', refCount: 0 });
   }
   if (u.startsWith('/agnes/history')) {
     return json({ ok: true, entries: [], max: 24 });
@@ -710,7 +710,7 @@ await testAsync('resumeTasks：挂载时接回运行中的视频任务', async (
       return json({ ok: true, tasks: [{ id: 'v-live', status: 'running', progress: 30, prompt: '跑着的任务' }], active: 1 });
     }
     if (u.startsWith('/agnes/task?id=')) {
-      return json({ ok: true, task: { id: 'v-live', status: 'completed', progress: 100, videoId: 'vid-1', filename: 'vid.mp4', path: '/tmp/out/vid.mp4', bytes: 1234, ratio: '16:9', seconds: '5', mode: 'keyframe', prompt: '跑着的任务' } });
+      return json({ ok: true, task: { id: 'v-live', status: 'completed', progress: 100, videoId: 'vid-1', filename: 'vid.mp4', path: '/data/out/vid.mp4', bytes: 1234, ratio: '16:9', seconds: '5', mode: 'keyframe', prompt: '跑着的任务' } });
     }
     if (u.startsWith('/agnes/history')) return json({ ok: true, entries: [], max: 24 });
     return json({ ok: false });
