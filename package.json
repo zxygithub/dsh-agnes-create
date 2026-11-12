@@ -1,7 +1,7 @@
 {
   "name": "dsh-agnes-create",
-  "version": "0.10.3",
-  "description": "Agnes 创作：在 DeepSeek Harness 里出图、出视频，也能让 agent 在对话里直接调用。图片支持文生图 / 图生图 / 多图合成（agnes-image-2.5-flash）；视频支持文生 / 首尾帧关键帧 / 参考图三种模式与 seed（agnes-video-2.5-flash，720P，4–12 秒）。侧边栏面板 + 模型工具双通道，视频任务由宿主推进、刷新或重启可接回；提示词写进图片（PNG iTXt / JPEG COM）悬停可看可复制；可浏览输出目录、历史 24 条、模型可切换并测试连接；标题栏的模型名可直接点开切换。",
+  "version": "0.11.0",
+  "description": "Agnes 创作：在 DeepSeek Harness 里出图、出视频，也能让 agent 在对话里直接调用。图片支持文生图 / 图生图 / 多图合成（agnes-image-2.5-flash）；视频支持文生 / 首尾帧关键帧 / 参考图三种模式与 seed（agnes-video-2.5-flash，720P，4–12 秒）。侧边栏面板 + 模型工具双通道，视频任务由宿主推进、刷新或重启可接回；提示词写进图片（PNG iTXt / JPEG COM）悬停可看可复制；可浏览输出目录、历史 24 条、模型可切换并测试连接；标题栏的模型名可直接点开切换；提示词可存成自定义预设并一键扩写。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

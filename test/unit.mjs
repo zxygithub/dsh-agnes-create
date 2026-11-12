@@ -27,6 +27,7 @@ const CONFIG_DIR = join(homedir(), '.dsh', 'agnes-create');
 const HISTORY_FILE = join(CONFIG_DIR, 'history.json');
 const TASKS_FILE = join(CONFIG_DIR, 'tasks.json');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+const PRESETS_FILE = join(CONFIG_DIR, 'presets.json');
 
 let passed = 0;
 const failures = [];
@@ -944,6 +945,157 @@ await testAsync('POST /agnes/generate：请求体用配置里的图片模型', a
     globalThis.fetch = realFetch;
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+/* ================================================================== */
+/* 4. 自定义提示词预设 + 提示词扩写（0.11.0）                           */
+/* ================================================================== */
+
+await backup(PRESETS_FILE);
+await rm(PRESETS_FILE, { force: true });
+
+await testAsync('预设：没有文件时读回空列表', async () => {
+  const out = await A.readPresets();
+  assert.equal(out.presets.length, 0);
+  assert.equal(out.file, PRESETS_FILE);
+});
+
+await testAsync('预设：坏文件静默回退为空列表', async () => {
+  await writeFile(PRESETS_FILE, '{ 这不是 JSON');
+  const out = await A.readPresets();
+  assert.equal(out.presets.length, 0, '配置坏了也不能让面板报错');
+});
+
+await testAsync('预设：保存 → 同名覆盖并置顶 → 删除幂等', async () => {
+  await A.savePreset({ label: '甲', text: '一条' });
+  await A.savePreset({ label: '乙', text: '二条' });
+  let out = await A.readPresets();
+  assert.deepEqual(out.presets.map((p) => p.label), ['乙', '甲'], '新的在最前面');
+
+  await A.savePreset({ label: '甲', text: '改过' });
+  out = await A.readPresets();
+  assert.deepEqual(out.presets.map((p) => p.label), ['甲', '乙'], '同名应置顶而不是多出一条');
+  assert.equal(out.presets[0].text, '改过');
+
+  await A.removePreset('乙');
+  out = await A.readPresets();
+  assert.deepEqual(out.presets.map((p) => p.label), ['甲']);
+
+  await A.removePreset('不存在');
+  out = await A.readPresets();
+  assert.equal(out.presets.length, 1, '删不存在的名字应当成功且不改动列表');
+});
+
+await testAsync('预设：拒绝空名称 / 空内容', async () => {
+  await assert.rejects(A.savePreset({ label: '   ', text: 'x' }), /预设需要名称和内容/);
+  await assert.rejects(A.savePreset({ label: 'x', text: '   ' }), /预设需要名称和内容/);
+  await assert.rejects(A.savePreset(null), /预设需要名称和内容/);
+});
+
+await testAsync('预设：名称截到 20 字、内容截到 600 字', async () => {
+  const out = await A.savePreset({ label: 'a'.repeat(40), text: 'b'.repeat(900) });
+  const first = out.presets[0];
+  assert.equal(first.label.length, 20);
+  assert.equal(first.text.length, 600);
+});
+
+await testAsync('预设：最多保留 40 条', async () => {
+  for (let i = 0; i < 45; i += 1) {
+    await A.savePreset({ label: `批量${i}`, text: `内容${i}` });
+  }
+  const out = await A.readPresets();
+  assert.equal(out.presets.length, 40, '不能无限增长');
+  assert.equal(out.presets[0].label, '批量44', '最新的在最前面');
+});
+
+await testAsync('扩写：200 时返回正文并剥掉引号', async () => {
+  const realFetch = globalThis.fetch;
+  let seen = null;
+  globalThis.fetch = async (url, init) => {
+    seen = { url: String(url), body: JSON.parse(String(init.body)) };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [{ message: { content: '“一只橘猫端坐在窗台上，午后逆光，浅景深，35mm 定焦”' } }],
+        usage: { total_tokens: 160 },
+      }),
+      text: async () => '',
+    };
+  };
+  try {
+    const out = await A.expandPrompt('一只橘猫', { key: 'sk-test-only' });
+    assert.equal(out.prompt, '一只橘猫端坐在窗台上，午后逆光，浅景深，35mm 定焦', '首尾的引号要去掉');
+    assert.equal(out.model, A.EXPAND_MODEL);
+    assert.equal(seen.url, 'https://api.agnes-ai.cn/v1/chat/completions');
+    assert.equal(seen.body.model, A.EXPAND_MODEL);
+    assert.equal(seen.body.messages.length, 2);
+    assert.equal(seen.body.messages[1].content, '一只橘猫');
+    assert.ok(seen.body.messages[0].content.includes('图像提示词工程师'), '图片模式用图像那套 system');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+await testAsync('扩写：视频模式换用镜头描述的 system', async () => {
+  const realFetch = globalThis.fetch;
+  let seen = null;
+  globalThis.fetch = async (url, init) => {
+    seen = JSON.parse(String(init.body));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: '镜头缓慢推近，橘猫抬头。' } }] }),
+      text: async () => '',
+    };
+  };
+  try {
+    const out = await A.expandPrompt('橘猫抬头', { kind: 'video', key: 'sk-test-only' });
+    assert.equal(out.prompt, '镜头缓慢推近，橘猫抬头。');
+    assert.ok(seen.messages[0].content.includes('视频提示词工程师'), '视频模式用视频那套 system');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+await testAsync('扩写：401 / 空正文 / 空输入 都给出可读错误', async () => {
+  const realFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => ({ ok: false, status: 401, json: async () => ({}), text: async () => '' });
+    await assert.rejects(A.expandPrompt('随便写点', { key: 'sk-test-only' }), /Key 无效或已过期（HTTP 401）/);
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: '   ' } }] }),
+      text: async () => '',
+    });
+    await assert.rejects(A.expandPrompt('随便写点', { key: 'sk-test-only' }), /上游没有返回内容/);
+
+    await assert.rejects(A.expandPrompt('   ', { key: 'sk-test-only' }), /先写一句想画什么/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+await testAsync('客户端：预设与扩写的方法都已导出', () => {
+  const s = createStore();
+  for (const name of ['loadPresets', 'appendPreset', 'saveCurrentAsPreset', 'deletePreset', 'setPresetLabel', 'togglePresetForm', 'expandPrompt']) {
+    assert.equal(typeof s[name], 'function', `缺少 ${name}`);
+  }
+  const st = s.get();
+  assert.deepEqual(st.presets, []);
+  assert.equal(st.presetFormOpen, false);
+  assert.equal(st.expandBusy, false);
+});
+
+await testAsync('客户端：appendPreset 追加到已有一句之后，空提示词则直接填入', async () => {
+  const s = createStore();
+  s.appendPreset({ label: '内置', text: '水彩风格' });
+  assert.equal(s.get().prompt, '水彩风格');
+  s.set({ prompt: '一只橘猫，' });
+  s.appendPreset({ label: '内置', text: '水彩风格' });
+  assert.equal(s.get().prompt, '一只橘猫，水彩风格', '应去掉尾部的逗号再拼');
 });
 
 /* 收尾：停掉任务引擎、复原用户数据 */
