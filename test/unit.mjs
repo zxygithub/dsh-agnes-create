@@ -1098,6 +1098,171 @@ await testAsync('客户端：appendPreset 追加到已有一句之后，空提�
   assert.equal(s.get().prompt, '一只橘猫，水彩风格', '应去掉尾部的逗号再拼');
 });
 
+/* ================================================================== */
+/* 5. A 类改造（0.12.0）：上游地址 / 提交态 / 密度·张数·拖拽            */
+/* ================================================================== */
+
+await backup(CONFIG_FILE);
+await backup(TASKS_FILE);
+
+test('上游地址：normalizeBase 去掉空白与尾部斜杠，非法协议回退 null', () => {
+  assert.equal(A.normalizeBase('  https://api.example.cn/v1/  '), 'https://api.example.cn/v1');
+  assert.equal(A.normalizeBase('http://x/v1//'), 'http://x/v1');
+  assert.equal(A.normalizeBase('ftp://x'), null);
+  assert.equal(A.normalizeBase(''), null);
+  assert.equal(A.normalizeBase(null), null);
+  assert.equal(A.normalizeBase(undefined), null);
+});
+
+await testAsync('上游地址：没配置时用内置中国站默认', async () => {
+  await rm(CONFIG_FILE, { force: true });
+  const p = await A.resolvePaths();
+  assert.equal(p.baseUrl, A.DEFAULT_BASE);
+  assert.equal(p.defaults.baseUrl, A.DEFAULT_BASE);
+  assert.equal(p.stored.baseUrl, null);
+});
+
+await testAsync('上游地址：保存后生效，显式参数优先于配置', async () => {
+  await A.saveConfig({ baseUrl: 'https://alt.example.cn/v1/' });
+  const p = await A.resolvePaths();
+  assert.equal(p.baseUrl, 'https://alt.example.cn/v1', '存前应当去掉尾部斜杠');
+  assert.equal(await A.baseOf(), 'https://alt.example.cn/v1');
+  assert.equal(await A.baseOf('https://arg.example.cn/v1'), 'https://arg.example.cn/v1');
+});
+
+await testAsync('上游地址：非法协议保存时报可读错误', async () => {
+  await assert.rejects(() => A.saveConfig({ baseUrl: 'ftp://bad' }), /上游地址必须是 http\(s\) 地址/);
+});
+
+await testAsync('上游地址：生成请求真的打到配置的地址', async () => {
+  const realFetch = globalThis.fetch;
+  const dir = await mkdtemp(join(tmpdir(), 'agnes-base-'));
+  const keyFile = join(dir, 'key.txt');
+  await writeFile(keyFile, 'sk-test-only', 'utf8');
+  await A.saveConfig({ keyFile, outDir: dir, baseUrl: 'https://alt.example.cn/v1' });
+  let seenUrl = '';
+  globalThis.fetch = async (url) => {
+    seenUrl = String(url);
+    const payload = JSON.stringify({ data: [{ b64_json: makePng().toString('base64') }] });
+    return { ok: true, status: 200, text: async () => payload, json: async () => JSON.parse(payload) };
+  };
+  try {
+    const r = await A.generate({ prompt: '换域名测试', size: '1K', ratio: '1:1' });
+    assert.ok(r.path.startsWith(dir), '应当落到输出目录');
+    assert.match(seenUrl, /^https:\/\/alt\.example\.cn\/v1\//, '应当用配置里的地址');
+  } finally {
+    globalThis.fetch = realFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+await testAsync('任务：submitting 是活动态，reference 模式与重试字段都保留', async () => {
+  assert.ok(A.TASK_ACTIVE.includes('submitting'), 'submitting 也必须算活动任务');
+  await A.writeTasks([
+    {
+      id: 't1',
+      status: 'submitting',
+      mode: 'reference',
+      baseUrl: 'https://alt.example.cn/v1',
+      attempts: 2,
+      pollErrors: 3,
+      lastError: 'boom',
+    },
+    { id: 't2', status: 'weird', mode: 'nonsense' },
+  ]);
+  const list = await A.readTasks();
+  const t1 = list.find((x) => x.id === 't1');
+  assert.equal(t1.status, 'submitting');
+  assert.equal(t1.mode, 'reference', 'reference 不能被写成 text');
+  assert.equal(t1.baseUrl, 'https://alt.example.cn/v1');
+  assert.equal(t1.attempts, 2);
+  assert.equal(t1.pollErrors, 3);
+  assert.equal(t1.lastError, 'boom');
+  const t2 = list.find((x) => x.id === 't2');
+  assert.equal(t2.status, 'queued', '未知状态回退 queued');
+  assert.equal(t2.mode, 'text', '未知模式回退 text');
+});
+
+await testAsync('POST /agnes/tasks：上游没回来也立刻返回 submitting', async () => {
+  const realFetch = globalThis.fetch;
+  const dir = await mkdtemp(join(tmpdir(), 'agnes-submit-'));
+  const keyFile = join(dir, 'key.txt');
+  await writeFile(keyFile, 'sk-test-only', 'utf8');
+  await A.saveConfig({ keyFile, outDir: dir, baseUrl: 'https://alt.example.cn/v1' });
+  // 永不返回：模拟上游卡住，验证宿主不跟着一起卡
+  globalThis.fetch = () => new Promise(() => {});
+  try {
+    const out = await callRoute('/agnes/tasks', 'POST', { prompt: '提交态测试' });
+    assert.equal(out.status, 200, JSON.stringify(out.json));
+    assert.equal(out.json.ok, true);
+    assert.equal(out.json.task.status, 'submitting');
+    assert.equal(out.json.task.videoId, null);
+    assert.equal(out.json.task.attempts, 0);
+    assert.equal(out.json.task.baseUrl, 'https://alt.example.cn/v1', '任务要记住提交时的地址');
+
+    const got = await callRoute('/agnes/task?id=' + out.json.task.id);
+    assert.equal(got.json.task.status, 'submitting');
+    assert.equal(typeof got.json.task.pollErrors, 'number');
+  } finally {
+    globalThis.fetch = realFetch;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+await testAsync('客户端：密度 / 张数 / 拖拽 / 失败重试 都已导出', async () => {
+  const s = createStore();
+  for (const fn of ['setDensity', 'setBatch', 'setDrag', 'dropRefs', 'dropVRefs', 'retryFailed']) {
+    assert.equal(typeof s[fn], 'function', `store 缺少 ${fn}`);
+  }
+  const st = s.get();
+  assert.equal(st.density, 'standard');
+  assert.equal(st.batch, 1);
+  assert.equal(st.refsDrag, false);
+  assert.deepEqual(st.results, []);
+});
+
+test('客户端：setDensity 只认三档，脏值回 standard', () => {
+  const s = createStore();
+  s.setDensity('compact');
+  assert.equal(s.get().density, 'compact');
+  s.setDensity('large');
+  assert.equal(s.get().density, 'large');
+  s.setDensity('huge');
+  assert.equal(s.get().density, 'standard');
+});
+
+test('客户端：setBatch 只认 1/2/4，回到 1 时清掉失败槽位', () => {
+  const s = createStore();
+  s.set({ failedSlots: [{ slot: 0, error: 'x' }] });
+  s.setBatch(4);
+  assert.equal(s.get().batch, 4);
+  assert.equal(s.get().failedSlots.length, 1, '换档不该丢失败槽位');
+  s.setBatch('2');
+  assert.equal(s.get().batch, 2);
+  s.setBatch(7);
+  assert.equal(s.get().batch, 1, '非法张数回退 1');
+  assert.deepEqual(s.get().failedSlots, [], '回到单张要清掉槽位');
+});
+
+await testAsync('客户端：拖拽非图片文件只报错、不抛异常', async () => {
+  const s = createStore();
+  s.setDrag('image', true);
+  assert.equal(s.get().refsDrag, true);
+  await s.dropRefs(undefined);
+  assert.equal(s.get().refsDrag, false, '落下后要关掉高亮');
+  assert.match(s.get().refsError, /没有可用的图片文件/);
+  assert.deepEqual(s.get().refs, []);
+});
+
+await testAsync('工具与文案：agnes_models 已注册，客户端有提交态文案', async () => {
+  const indexSrc = await readFile(join(LIB, 'index.js'), 'utf8');
+  assert.ok(indexSrc.includes("name: 'agnes_models'"), 'index.js 应当注册第四个工具 agnes_models');
+  const clientSrc = await readFile(join(LIB, 'client.js'), 'utf8');
+  for (const text of ['提交中…', '排队中…', '查询重试']) {
+    assert.ok(clientSrc.includes(text), `客户端缺少状态文案 ${text}`);
+  }
+});
+
 /* 收尾：停掉任务引擎、复原用户数据 */
 for (const fn of effects) {
   try {
