@@ -751,6 +751,17 @@ test('样式：client.js 不给 style 传字符串（React 会抛错导致整块
   assert.equal(src.includes('style: "'), false, 'style 必须是对象，字符串会让 React 抛错');
 });
 
+test('样式：预设表单的「保存」按钮不会被输入框挤压（否则「保存」竖排成高窄盒）', async () => {
+  const src = await readFile(join(LIB, 'client.js'), 'utf8');
+  const at = src.indexOf('.agn-preset-form .agn-btn');
+  assert.ok(at > 0, '缺少 .agn-preset-form .agn-btn 规则');
+  const block = src.slice(src.lastIndexOf('.agn-preset-form .agn-input-sm', at), at + 260);
+  // .agn-input 自带 width: 100%，作为 flex 基准会把按钮压到 min-content，两字竖排、盒子变高。
+  assert.ok(block.includes('width: auto'), '预设输入框必须覆盖 width: 100% 并让出空间');
+  assert.ok(block.includes('flex: 0 0 auto'), '保存按钮不能被压缩');
+  assert.ok(block.includes('white-space: nowrap'), '「保存」不能换行');
+});
+
 test('工具：向宿主申请了 tools 服务（没有 tools 也不影响插件激活）', () => {
   assert.ok(
     injectCalls.some((names) => Array.isArray(names) && names.includes('tools')),
