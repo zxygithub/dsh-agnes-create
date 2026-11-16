@@ -1278,6 +1278,246 @@ await testAsync('工具与文案：agnes_models 已注册，客户端有提交�
   }
 });
 
+/* ================================================================== */
+/* 6. 多语言（i18n.js + /agnes/i18n + 字典覆盖）                        */
+/* ================================================================== */
+
+const I18N = await import(join(LIB, 'i18n.js'));
+const LANG_FILES = ['en', 'ja', 'fr', 'de', 'pt', 'ru', 'es'];
+
+test('多语言：可选语言是「自动」+ 8 种', () => {
+  assert.deepEqual(I18N.LOCALES, ['zh', 'en', 'ja', 'fr', 'de', 'pt', 'ru', 'es']);
+  const options = I18N.localeOptions();
+  assert.equal(options.length, 9, '自动 + 8 种语言');
+  assert.equal(options[0].value, 'auto');
+  for (const lang of I18N.LOCALES) {
+    assert.ok(typeof I18N.LOCALE_LABELS[lang] === 'string' && I18N.LOCALE_LABELS[lang].length > 0, `缺少 ${lang} 的语言名`);
+    assert.ok(options.some((o) => o.value === lang), `下拉里缺少 ${lang}`);
+  }
+});
+
+test('多语言：normalizeLocale 归一常见写法', () => {
+  assert.equal(I18N.normalizeLocale('ZH-hans'), 'zh');
+  assert.equal(I18N.normalizeLocale(' zh_Hant '), 'zh');
+  assert.equal(I18N.normalizeLocale('en_US'), 'en');
+  assert.equal(I18N.normalizeLocale('ja-JP'), 'ja');
+  assert.equal(I18N.normalizeLocale('pt-BR'), 'pt');
+  assert.equal(I18N.normalizeLocale('xx'), null);
+  assert.equal(I18N.normalizeLocale(''), null);
+  assert.equal(I18N.normalizeLocale(null), null);
+});
+
+test('多语言：normalizeLocalePref 只接受 auto 与 8 种语言', () => {
+  assert.equal(A.normalizeLocalePref('auto'), 'auto');
+  assert.equal(A.normalizeLocalePref('AUTO'), 'auto');
+  assert.equal(A.normalizeLocalePref('fr'), 'fr');
+  assert.equal(A.normalizeLocalePref('de-DE'), 'de');
+  assert.equal(A.normalizeLocalePref('xx'), null);
+  assert.equal(A.normalizeLocalePref(undefined), null);
+});
+
+test('多语言：resolveLocale 显式优先、auto 跟随应用语言', () => {
+  assert.equal(I18N.resolveLocale('en', 'ja-JP'), 'en');
+  assert.equal(I18N.resolveLocale('auto', 'ja-JP'), 'ja');
+  assert.equal(I18N.resolveLocale('', 'ru-RU'), 'ru');
+  assert.equal(I18N.resolveLocale('auto', null), 'zh');
+  assert.equal(I18N.resolveLocale('auto', 'xx-YY'), 'zh');
+});
+
+test('多语言：dictFor 中文返回空、其它语言带英文兜底', () => {
+  assert.deepEqual(I18N.dictFor('zh'), {});
+  assert.deepEqual(I18N.dictFor(null), {});
+  assert.equal(I18N.dictFor('en')['生成'], 'Generate');
+  // 未知语言回退到英文而不是中文
+  // 未知语言：normalizeLocale 返回 null，dictFor 视为「没有字典」，调用方回退中文原文
+  assert.deepEqual(I18N.dictFor('xx'), {});
+  assert.equal(I18N.dictFor('ja')['张数'], '枚数');
+});
+
+test('多语言：translate 支持占位符并回退中文', () => {
+  assert.equal(I18N.translate('生成', 'en'), 'Generate');
+  assert.equal(I18N.translate('生成', 'zh'), '生成');
+  assert.equal(I18N.translate('没有这条', 'en'), '没有这条');
+  const en = I18N.translate('已存为预设「{name}」', 'en', { name: 'cat' });
+  assert.ok(en.includes('cat'), '占位符要替换成传入的值');
+  assert.ok(!en.includes('{name}'), '不能留下未替换的占位符');
+});
+
+test('多语言：7 份字典 key 覆盖客户端全部文案', async () => {
+  const clientSrc = await readFile(join(LIB, 'client.js'), 'utf8');
+  const keys = new Set();
+  for (const m of clientSrc.matchAll(/T\("((?:[^"\\]|\\.)*)"/g)) keys.add(JSON.parse('"' + m[1] + '"'));
+  assert.ok(keys.size >= 200, `客户端文案应有 200 条以上，实际 ${keys.size}`);
+
+  const placeholders = (s) => new Set([...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]));
+  for (const lang of LANG_FILES) {
+    const text = await readFile(join(LIB, 'locales', `${lang}.js`), 'utf8');
+    const dict = {};
+    for (const m of text.matchAll(/^\s*("(?:[^"\\]|\\.)*"):\s*("(?:[^"\\]|\\.)*"),?\s*$/gm)) {
+      dict[JSON.parse(m[1])] = JSON.parse(m[2]);
+    }
+    assert.equal(Object.keys(dict).length, keys.size, `${lang}.js 条数与客户端文案数不一致`);
+    for (const key of keys) {
+      assert.ok(typeof dict[key] === 'string' && dict[key].length > 0, `${lang} 缺少译文：${key}`);
+      const need = placeholders(key);
+      const got = placeholders(dict[key]);
+      for (const name of need) assert.ok(got.has(name), `${lang} 的译文丢了占位符 {${name}}：${key}`);
+    }
+  }
+});
+
+test('多语言：客户端会按应用语言取字典，并提供语言下拉', async () => {
+  const src = await readFile(join(LIB, 'client.js'), 'utf8');
+  assert.ok(src.includes('/agnes/i18n'), '挂载时要向宿主取字典');
+  assert.ok(src.includes('"?lang="'), '要把应用语言一起带过去');
+  assert.ok(src.includes('navigator.language'), '自动模式要拿应用语言');
+  assert.ok(src.includes('store.setLocale'), '设置里要能手动切换语言');
+  assert.ok(src.includes('T("界面语言")'), '设置里要有语言这一项');
+  const store = createStore();
+  assert.equal(store.get().localePref, 'auto');
+  assert.ok(Array.isArray(store.get().localeOptions));
+});
+
+await testAsync('多语言：/agnes/i18n 按 pref 与应用语言解析', async () => {
+  await backup(CONFIG_FILE);
+  try {
+    await A.saveConfig({ locale: 'auto' });
+    const auto = await callRoute('/agnes/i18n?lang=ja-JP');
+    assert.equal(auto.status, 200);
+    assert.equal(auto.json.ok, true);
+    assert.equal(auto.json.pref, 'auto');
+    assert.equal(auto.json.locale, 'ja', 'auto 要跟着应用语言走');
+    assert.equal(auto.json.options.length, 9);
+    assert.equal(auto.json.dict['张数'], '枚数');
+
+    await A.saveConfig({ locale: 'ru' });
+    const fixed = await callRoute('/agnes/i18n?lang=ja-JP');
+    assert.equal(fixed.json.locale, 'ru', '显式设置优先于应用语言');
+    assert.equal(fixed.json.pref, 'ru');
+
+    const zh = await callRoute('/agnes/i18n?lang=zh-CN');
+    await A.saveConfig({ locale: 'zh' });
+    const zhFixed = await callRoute('/agnes/i18n?lang=en-US');
+    assert.equal(zhFixed.json.locale, 'zh');
+    assert.deepEqual(zhFixed.json.dict, {}, '中文直接显示原文，不需要字典');
+  } finally {
+    await restoreAll();
+  }
+});
+
+await testAsync('多语言：config 能存 locale，非法值被拒', async () => {
+  await backup(CONFIG_FILE);
+  try {
+    const out = await A.saveConfig({ locale: 'es' });
+    assert.equal(out.locale, 'es');
+    const paths = await A.resolvePaths();
+    assert.equal(paths.locale, 'es');
+    await assert.rejects(() => A.saveConfig({ locale: 'xx' }), /界面语言不在可选范围内/);
+    await A.saveConfig({ locale: '' });
+    assert.equal((await A.resolvePaths()).locale, 'auto', '空值回到自动');
+  } finally {
+    await restoreAll();
+  }
+});
+
+await testAsync('多语言：扩写 system prompt 跟随界面语言', async () => {
+  const realFetch = globalThis.fetch;
+  let seen = null;
+  globalThis.fetch = async (url, init) => {
+    seen = JSON.parse(String(init.body));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: 'a cat on a windowsill' } }] }),
+      text: async () => '',
+    };
+  };
+  try {
+    await A.expandPrompt('一只橘猫', { key: 'sk-test-only', locale: 'en' });
+    assert.ok(seen.messages[0].content.includes('image prompt engineer'), '英文界面用英文 system');
+    assert.ok(!seen.messages[0].content.includes('提示词工程师'));
+
+    await A.expandPrompt('一只橘猫', { key: 'sk-test-only', locale: 'ja' });
+    assert.ok(seen.messages[0].content.includes('image prompt engineer'));
+    assert.ok(seen.messages[0].content.includes('Japanese'), '非中英语言要指名目标语言');
+
+    await A.expandPrompt('一只橘猫', { key: 'sk-test-only', locale: 'zh' });
+    assert.ok(seen.messages[0].content.includes('图像提示词工程师'), '中文界面仍用中文 system');
+
+    await A.expandPrompt('一只橘猫', { key: 'sk-test-only', locale: 'fr', kind: 'video' });
+    assert.ok(seen.messages[0].content.includes('video prompt engineer'));
+    assert.ok(seen.messages[0].content.includes('French'));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+await testAsync('「自动」跟随应用语言：取字典时用宿主 locale，而不是 navigator.language', async () => {
+  // Electron 的 navigator.language 是操作系统语言，应用里切成英文它不变；
+  // 所以「自动」必须向宿主 locale 服务要当前语言，并在它变化时重新取一次字典。
+  const seen = [];
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => { seen.push(String(url)); return { ok: true, json: async () => ({ ok: false }) }; };
+  try {
+    const listeners = [];
+    const loc = {
+      getSnapshot: () => ({ active: 'en-US', locales: [], revision: 1 }),
+      subscribe: (fn) => { listeners.push(fn); return () => {}; },
+    };
+    const emptySlots = { inject() {}, register() {} };
+    clientMod.apply({
+      get: (n) => (n === 'slots' ? emptySlots : n === 'locale' ? loc : undefined),
+      // ctx.effect 会立刻执行工厂函数并接管其返回的清理函数，桩要照做，否则订阅不会发生
+      effect: (fn) => { const off = fn(); return typeof off === 'function' ? off : () => {}; },
+      on() {},
+      reflect: { get: () => undefined },
+    });
+    const store = clientMod.__internals.getStore();
+    await store.loadI18n();
+    assert.ok(seen.some((u) => u.includes('lang=en-US')), '取字典时应带上宿主语言（不是 navigator.language）');
+
+    seen.length = 0;
+    store.set({ localePref: 'auto' });
+    for (const fn of listeners) fn();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.ok(seen.some((u) => u.includes('lang=en-US')), '应用切语言后「自动」应重新取字典');
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('侧边栏名称跟随语言：换语言后重新注册一次，宿主才会重读 label()', () => {
+  // 宿主把侧边栏名称缓存在自己的快照里，只在 panellist 账本变动或宿主 locale 变化时重读。
+  // 插件自己换语言不在这两条里，所以 applyI18n 必须把这条重新挂一次。
+  const sidebar = [];
+  let disposed = 0;
+  const fakeSlots = {
+    inject(name, factory) { factory(); },
+    register(spec) {
+      const entry = { name: spec.name, label: spec.label };
+      if (spec.name === 'sidebar.panellist') sidebar.push(entry);
+      return () => { disposed += 1; };
+    },
+  };
+  const ctx = {
+    get: (n) => (n === 'slots' ? fakeSlots : undefined),
+    effect: () => () => {},
+    on() {},
+    reflect: { get: () => undefined },
+  };
+  clientMod.apply(ctx);
+  assert.equal(sidebar.length, 1, 'apply 时应注册一次侧边栏条目');
+  assert.equal(sidebar[0].label(), 'Agnes创作');
+
+  clientMod.__internals.applyI18n('en', { 'Agnes创作': 'Agnes Studio' });
+  assert.ok(disposed >= 1, '换语言必须先释放旧注册');
+  assert.equal(sidebar.length, 2, '换语言后要重新注册，账本一动宿主才会重读 label()');
+  assert.equal(sidebar[1].label(), 'Agnes Studio', '重注册的 label 应读到新字典');
+
+  clientMod.__internals.applyI18n('zh', {});
+  assert.equal(sidebar[2].label(), 'Agnes创作', '切回中文应回到原文');
+});
+
 /* 收尾：停掉任务引擎、复原用户数据 */
 for (const fn of effects) {
   try {
