@@ -23,7 +23,11 @@ import zlib from 'node:zlib';
 // 目录名里有中文（研究），URL.pathname 会保留百分号编码，必须用 fileURLToPath 解码
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const LIB = join(ROOT, 'lib');
-const CONFIG_DIR = join(homedir(), '.dsh', 'agnes-create');
+// 测试全程跑在临时配置目录里：绝不读写用户真实的 ~/.dsh/agnes-create
+// （曾经因为中途 uncaught 跳过复原，把「批量0..批量44」这类测试预设留在了用户面板里）
+const TEST_HOME = await mkdtemp(join(tmpdir(), 'agnes-home-'));
+process.env.AGNES_CONFIG_DIR = TEST_HOME;
+const CONFIG_DIR = TEST_HOME;
 const HISTORY_FILE = join(CONFIG_DIR, 'history.json');
 const TASKS_FILE = join(CONFIG_DIR, 'tasks.json');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -1528,6 +1532,7 @@ for (const fn of effects) {
   }
 }
 await restoreAll();
+await rm(TEST_HOME, { recursive: true, force: true });
 
 console.log('');
 console.log(`通过 ${passed} / ${passed + failures.length}`);
