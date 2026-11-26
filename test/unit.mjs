@@ -1451,6 +1451,90 @@ await testAsync('多语言：扩写 system prompt 跟随界面语言', async () 
   }
 });
 
+/* ---------- 右侧栏（sidebarRight）：两处并存 ---------- */
+
+await testAsync('侧栏：注册右侧栏标签类型与正文，按钮点开即停靠', async () => {
+  const src = await readFile(join(LIB, 'client.js'), 'utf8');
+  assert.ok(src.includes('TAB_ID'), '要有标签 id');
+  assert.ok(src.includes('TAB_KIND'), '要有标签 kind');
+  assert.ok(src.includes('sidebarRightTabs'), '要拿宿主的标签类型注册表');
+  assert.ok(src.includes('sidebarRight'), '要拿宿主的右侧栏控制器');
+  assert.ok(src.includes('sidebar.right.pane.tab'), '正文要注册进右侧栏的面板 slot');
+  assert.ok(src.includes('priority: "extension"'), '第三方类型走 extension 档');
+  assert.ok(src.includes('T("停靠到侧栏")'), '主栏要有「停靠到侧栏」按钮');
+
+  const dicts = { en: { 'Agnes创作': 'Agnes Studio', '出图 / 出视频': 'Image / video' } };
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, locales: ['zh'], labels: { zh: '中文' }, dicts }) });
+  const loc = {
+    getSnapshot() { return { active: 'zh', locales: [], revision: 1 }; },
+    subscribe() { return () => {}; },
+    register() { return () => {}; },
+    bind() { return (key) => key; },
+  };
+  const registered = [];
+  const injected = [];
+  const fakeSlots = {
+    inject(name, factory) { injected.push(name); factory(); },
+    register(spec) { registered.push(spec); return () => {}; },
+  };
+  const tabTypes = [];
+  const opens = [];
+  const sidebarRight = { openTab(kind) { opens.push(kind); } };
+  const sidebarRightTabs = { register(desc) { tabTypes.push(desc); return () => {}; } };
+  const ctx = {
+    get: (n) => (n === 'slots' ? fakeSlots : n === 'locale' ? loc : n === 'sidebarRight' ? sidebarRight : n === 'sidebarRightTabs' ? sidebarRightTabs : undefined),
+    effect: (fn) => { const off = fn(); return typeof off === 'function' ? off : () => {}; },
+    on() {},
+    reflect: { get: () => undefined },
+  };
+  try {
+    clientMod.apply(ctx);
+    await new Promise((r) => setTimeout(r, 0));
+
+    assert.equal(tabTypes.length, 1, '要注册一个右侧栏标签类型');
+    const desc = tabTypes[0];
+    assert.equal(desc.id, 'dsh-agnes-create/panel');
+    assert.equal(desc.kind, 'agnesCreate');
+    assert.equal(desc.priority, 'extension');
+    assert.equal(desc.title(), 'Agnes创作', '标签标题走 T()');
+    assert.ok(Array.isArray(desc.guide) && desc.guide.length === 1, '引导页要有入口胶囊');
+    assert.equal(desc.guide[0].kind, undefined, '入口胶囊不带 kind，由类型自己决定');
+    assert.equal(desc.guide[0].title(), 'Agnes创作');
+    assert.equal(desc.guide[0].description(), '出图 / 出视频');
+
+    assert.ok(injected.includes('sidebar.right.pane.tab'), '正文注册进右侧栏 slot');
+    const body = registered.find((x) => x.name === 'sidebar.right.pane.tab');
+    assert.ok(body !== undefined, '要注册 sidebar.right.pane.tab');
+    assert.equal(body.key, 'dsh-agnes-create/panel', 'key 用类型 id');
+    assert.equal(body.locale, 'dsh-agnes-create', 'chip 文字交给宿主 locale');
+
+    clientMod.__internals.getStore().set({});
+    const before = opens.length;
+    clientMod.__internals.openInSidebar();
+    assert.equal(opens.length, before + 1, 'openInSidebar 要调 sidebarRight.openTab');
+    assert.equal(opens[opens.length - 1], 'agnesCreate', 'openTab 的 kind 要与我们注册的一致');
+
+    // 宿主拒绝（比如当前没有会话、右侧栏不可用）时只提示，不抛给渲染层
+    sidebarRight.openTab = () => { throw new Error('no session'); };
+    clientMod.__internals.openInSidebar();
+    const notice = clientMod.__internals.getStore().raw().notice;
+    assert.ok(/无法停靠到侧栏/.test(notice), '失败要写成可读提示：' + notice);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+await testAsync('侧栏：停靠时走紧凑版式，网格两列、密度按钮隐藏', async () => {
+  const src = await readFile(join(LIB, 'client.js'), 'utf8');
+  assert.ok(src.includes('" agn-sidebar"'), '停靠时根节点加 agn-sidebar');
+  assert.ok(src.includes('inSidebar ? "compact" : s.density'), '停靠时强制紧凑密度');
+  assert.ok(src.includes('inSidebar ? null :'), '停靠时不再显示「停靠到侧栏」按钮');
+  assert.ok(src.includes('.agn-sidebar .agn-grid { grid-template-columns: repeat(2, 1fr); }'), '窄栏网格两列');
+  assert.ok(src.includes('.agn-sidebar .agn-density { display: none; }'), '窄栏不再显示密度开关');
+  assert.ok(src.includes('agn-dock'), '按钮有独立 class 便于样式');
+});
+
 /* 收尾：停掉任务引擎、复原用户数据 */
 for (const fn of effects) {
   try {
